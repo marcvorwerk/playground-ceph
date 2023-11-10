@@ -1,0 +1,7 @@
+.python-version
+
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+
+.terraform/
