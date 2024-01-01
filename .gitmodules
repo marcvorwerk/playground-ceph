@@ -1,0 +1,3 @@
+[submodule "ansible-cephadm-bootstrap/cephadm-ansible"]
+	path = ansible-cephadm-bootstrap/cephadm-ansible
+	url = git@github.com:ceph/cephadm-ansible.git
