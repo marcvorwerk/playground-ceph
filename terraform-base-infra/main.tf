@@ -4,7 +4,9 @@
 
 variable "image" {
   type = string
-  default = "Ubuntu 22.04 Jammy Jellyfish - Latest"
+  #default = "Debian 11 Bullseye - Latest"
+  default = "Ubuntu 20.04 Focal Fossa - Latest"
+  #default = "Ubuntu 22.04 Jammy Jellyfish - Latest"
 }
 variable "flavor" {
   type = string
@@ -18,7 +20,7 @@ variable "vm_az" {
 
 variable "key_pair" {
   type = string
-  default = "marc_key"
+  default = "playground"
   description = "Openstack name of the keypair used for VM creation"
 }
 
