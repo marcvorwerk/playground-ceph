@@ -7,3 +7,6 @@
 .terraform/
 
 secret
+
+ansible-cephadm-bootstrap/library
+ansible-cephadm-bootstrap/module_utils
