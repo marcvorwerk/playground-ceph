@@ -1,0 +1,11 @@
+plugin: openstack.cloud.openstack
+
+all_projects: false
+expand_hostvars: true
+fail_on_errors: true
+strict: true
+
+groups:
+  bastion: "'ceph-bastion-instance' in inventory_hostname"
+  clients: "'ceph-osd-instance-' in inventory_hostname"
+  admin: "'ceph-controller-instance-' in inventory_hostname"
