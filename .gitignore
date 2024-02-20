@@ -8,5 +8,7 @@
 
 secret
 
+
+ansible-cephadm-bootstrap/ansible.cfg
 ansible-cephadm-bootstrap/library
 ansible-cephadm-bootstrap/module_utils
