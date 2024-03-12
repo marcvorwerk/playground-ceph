@@ -8,7 +8,6 @@
 
 secret
 
-ansible-cephadm-bootstrap/ansible.cfg
 
 ansible-cephadm-bootstrap/ansible.cfg
 ansible-cephadm-bootstrap/library
