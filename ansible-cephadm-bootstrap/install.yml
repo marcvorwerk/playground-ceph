@@ -1,0 +1,205 @@
+---
+- name: Prepare
+  hosts: ceph*
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Ubuntu related tasks
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: enable repo from download.ceph.com
+          block:
+            - name: prevent ceph certificate error
+              apt:
+                name: ca-certificates
+                state: latest
+                update_cache: true
+              register: result
+              until: result is succeeded
+
+            - name: download ceph repo key
+              ansible.builtin.get_url:
+                url: https://download.ceph.com/keys/release.asc
+                dest: /etc/apt/trusted.gpg.d/ceph.asc
+                mode: "0644"
+
+            - name: configure Ceph community repository
+              apt_repository:
+                repo: "deb https://download.ceph.com/debian-{{ ceph_release }}/ {{ ansible_facts['distribution_release'] }} main"
+                state: present
+                filename: ceph
+                update_cache: true
+
+
+        - name: install prerequisites packages
+          apt:
+            name: "{{ ['python3','chrony','ceph-common','cephadm'] }}"
+            state: "{{ (upgrade_ceph_packages | bool) | ternary('latest', 'present') }}"
+            update_cache: true
+          register: result
+          until: result is succeeded
+
+        - name: ensure chronyd is running
+          service:
+            name: chronyd
+            state: started
+            enabled: true
+
+        - name: install container engine
+          block:
+            - name: install podman
+              when: ansible_facts['distribution_version'] is version('20.10', '>=')
+              apt:
+                name: podman
+                state: present
+                update_cache: true
+              register: result
+              until: result is succeeded
+
+
+- name: bootstrap the cluster
+  hosts: admin[0]
+  become: true
+  gather_facts: true
+  tasks:
+
+    - name: Check if cluster is already bootstrapped
+      stat:
+        path: /etc/ceph/ceph.conf
+      register: ceph_conf_file
+
+    - name: bootstrap initial cluster
+      cephadm_bootstrap:
+        mon_ip: "{{ ansible_facts['default_ipv4']['address'] }}"
+        dashboard_user: mydashboarduser
+        dashboard_password: mydashboardpassword
+        allow_fqdn_hostname: true
+        cluster_network: "{{ ansible_facts['default_ipv4']['network'] }}/{{ ansible_facts['default_ipv4']['prefix'] }}"
+      when: not ceph_conf_file.stat.exists
+
+
+- name: manage clients
+  hosts: clients, admin
+  become: true
+  gather_facts: true
+  handlers:
+    - name: restart ssh
+      service:
+        name: sshd
+        state: restarted
+  tasks:
+    - name: Get FSID
+      ansible.builtin.shell:
+        cmd: ceph -f json status
+      run_once: true
+      delegate_to: "{{ groups['admin'][0] }}"
+      register: cluster_fsid
+      check_mode: false
+
+
+    - name: Extract fsid from JSON output
+      set_fact:
+        fsid: "{{ cluster_fsid.stdout | from_json | json_query('fsid') }}"
+
+    - name: debug
+      debug:
+        msg: "foo: {{ fsid }}"
+    
+    - name: slurp the keyring
+      slurp:
+        src: "/etc/ceph/ceph.client.admin.keyring"
+      check_mode: false
+      run_once: true
+      delegate_to: "{{ groups['admin'][0] }}"
+      register: client_keyring
+    
+    - name: create minimal conf as a default
+      command: cephadm shell -- ceph config generate-minimal-conf
+      check_mode: false
+      run_once: true
+      delegate_to: "{{ groups['admin'][0] }}"
+      register: minimal_ceph_config
+
+    - name: Print Keyring
+      debug:
+        msg: "Keyring1: {{ client_keyring }}"
+    
+    - name: Print Conf
+      debug:
+        msg: "Conf: {{ minimal_ceph_config }}"
+    
+    - name: copy configuration and keyring files to the clients
+      copy:
+        content: "{{ item.content }}"
+        dest: "{{ item.dest }}"
+        owner: ceph
+        group: ceph
+        mode: '0600'
+        backup: yes
+      loop:
+        - { content: "{{ client_keyring['content'] | b64decode }}",
+            dest: "{{ keyring_dest | default('/etc/ceph/ceph.keyring') }}",
+            copy_file: True }
+        - { content: "{{ client_keyring['content'] | b64decode }}",
+            dest: "{{ keyring_dest | default('/etc/ceph/ceph.client.admin.keyring') }}",
+            copy_file: True }
+        - { content: "{{ minimal_ceph_config['stdout'] | default('') }}{{ '\n' }}",
+            dest: '/etc/ceph/ceph.conf',
+            copy_file: "{{ conf is undefined }}" }
+      when: item.copy_file | bool
+
+    - name: Enable Root Login
+      lineinfile:
+            dest: /etc/ssh/sshd_config
+            regexp: '^PermitRootLogin'
+            line: "PermitRootLogin yes"
+            state: present
+      notify: restart ssh
+
+    - name: Get SSH Key
+      command: ceph cephadm get-pub-key
+      check_mode: false
+      run_once: true
+      delegate_to: "{{ groups['admin'][0] }}"
+      register: ceph_ssh_pub_key
+
+    - name: Set authorized key for user ubuntu copying it from current user
+      ansible.posix.authorized_key:
+        user: root
+        state: present
+        key: "{{ ceph_ssh_pub_key['stdout'] }}"
+
+    - name: add hosts to the cluster
+      ceph_orch_host:
+        name: "{{ ansible_hostname }}"
+        address: "{{ ansible_host }}"
+        labels: "{{ labels }}"
+
+
+- name: Finish
+  hosts: admin[0]
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Get Ceph Status
+      command: ceph status
+      check_mode: false
+      changed_when: false
+      register: ceph_cluster_status
+
+    - name: Print Ceph Status
+      ansible.builtin.debug:
+        var: ceph_cluster_status.stdout
+
+
+    - name: Ask user for confirmation
+      pause:
+        prompt: "Möchtest du alle verfügbaren Geräte als OSD verwenden? (yes/no)"
+      register: user_confirmation
+    
+    - name: Apply all available devices as OSD if user confirmed
+      command: ceph orch apply osd --all-available-devices
+      when: user_confirmation.user_input == "yes"
+
+
